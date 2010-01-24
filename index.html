@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="DESCRIPTION" content="Javascript Random Access Machine" />
+<title>Javascript Random Access Machine</title>
+<link rel="icon" href="favicon.png" type="image/png" />
+<link rel="shortcut icon" href="favicon.png" type="image/png" />
+<!-- <link type="text/css" rel="stylesheet" media="all" href="css/base.css" />  -->
+<style type="text/css" media ="all">
+	* { margin:0; padding:0; }
+	html { height:100% }
+	body { min-height:101%; font-size:100.01%; }
+	body { background:#89a8c4; }
+	body { text-align:center }
+	#page_margins { width:1024px; margin:0 auto; border:0px; padding-top:15px;}
+	#page_margins { text-align:left; }
+	#page_margins { font-family:Verdana,Helvetica,Arial,sans-serif; font-size:14px; }
+	h1,h2,h3,h4,h5,h6 { font-family:'ChunkFiveRegular',Rockwell,'Century Schoolbook',serif; margin:0 0 0.25em;}
+	#page { border:0px; padding:8px; background:#64788c; }
+	#page { -webkit-border-radius: 10px; -moz-border-radius: 10px; border-radius:10px; }
+	#innerpage { padding:10px; background:#ffffff; -webkit-border-radius: 8px; -moz-border-radius: 8px; border-radius:8px;}
+	#title { padding-left:40px; background:url('smiley.gif') no-repeat; height:35px; margin-bottom:15px; }
+	#title h1,h4 { display:inline; }
+	#title h4 { color:grey; }
+	#main { position:relative; height:500px;}
+	#column_1 { position:absolute; }
+	#column_1 h2 { text-align:center; }
+	#inputblock { position:absolute; left:195px; top:0;}
+	#codeblock { position:absolute; left:195px; top:70px; }
+	#ramcodestatic { position:absolute; left:0; top:0; z-index:99; overflow-y: scroll; background:#fafafa; border:1px dashed #dddddd; font-family:Monaco,'Courier New'; width:100%; height:100%; display:none; }
+	#editlabel { display:none; position:absolute; top:0; right:17px; z-index:100;}
+	#helpblock { position:absolute; left:764px; top:-45px; }
+	#helpblock table tr td { font-weight:bold; color:#333333 }
+	#helpblock table tr.odd td { font-weight:normal; }
+	.comment { color:green; }
+	.keyword { color:blue; }
+	.anchor { color:navy; }
+	.error { background:red;}
+	.highlight { background-color:yellow; }
+	.tablewrapper { border:2px solid #dddddd; }
+	table { border: none; border-collapse:collapse; font-size:12px; overflow:hidden; table-layout:fixed; }
+	// table { border-bottom-width:3px; }
+	td { background-color:#f6f6f6; padding:.3em 1em; }
+	tr.odd td { background-color:#eeeeee; }
+	th { font-weight:normal; padding:.3em 1em; }
+	thead th { background:#dddddd; font-weight:bold; }
+	
+	@font-face {
+		font-family: 'ChunkFiveRegular';
+		src: url('fonts/Chunkfive.eot');
+		src: local('ChunkFive Regular'), local('ChunkFive'), url('fonts/Chunkfive.woff') format('woff'), url('fonts/Chunkfive.otf') format('opentype'), url('fonts/Chunkfive.svg#ChunkFive') format('svg');
+	}
+
+</style>
+<script type="text/javascript" src="jquery-1.3.2.js"></script>
+<!-- <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.js"></script> -->
+<script type="text/javascript" src="jquery.color.js"></script>
+<script type="text/javascript">
+	// Array Remove - By John Resig (MIT Licensed)
+	Array.prototype.remove = function(from, to) {
+	  var rest = this.slice((to || from) + 1 || this.length);
+	  this.length = from < 0 ? this.length + from : from;
+	  return this.push.apply(this, rest);
+	};
+
+	
+	// regular expressions to extract the code
+	var RawLines = new RegExp('^.+$', 'gm');
+	var Lines = new RegExp('(^\\$[a-z]+\\s*|^\\s*)\\b(indload|cload|load|indstore|store|indadd|cadd|add|indsub|csub|sub|indmul|cmul|mul|inddiv|cdiv|div|gotolte|gotolt|gotoe|goto|end)\\b([^//]*)(//.*$)?', 'im');
+	var Arguments = new RegExp('([a-z][a-z0-9]*|[0-9]+)(,\\s(([a-z][a-z0-9]*)|([0-9]+)))?', 'im');
+
+	var Program = [];
+	var Parseerror = false;
+	var Modes = {"editmode":0, "parsing":1, "parseerror":3, "ready":4, "execution":5}; 
+	var State = Modes.editmode;
+	
+	function LineObject(line){
+		this.line = line;
+		this.error = false;
+	}
+	function CodeLine(anchor, instruction, val1, val2, comment){
+		this.anchor = anchor;
+		this.instruction = instruction;
+		this.val1 = val1;
+		this.val2 = val2;
+		this.comment = comment;
+	}
+	
+	function genSpaces(count){
+		var string = "";
+		for(i = 0; i < count; i++){
+			string += "&nbsp;";
+		}
+		return string
+	}
+
+	$(document).ready(function(){
+		// load example
+		$("#ramcode").text($("#square_root").html());
+		
+		$("#parse").click(function(){
+			if( $("#ramcodestatic").is(":hidden") )
+			{
+				var code = $("#ramcode").val();
+				if(!code){return;}
+				State = Modes.parsing;
+				Program = [];
+				var m = RawLines.exec(code);
+				var lines = [];
+				var i = 0;
+				while(null != m){
+					lines[i] = new LineObject(m[0]);
+					m = RawLines.exec(code);
+					i++;
+				}
+				
+				Parseerror = false;
+				var matchoffset = 0;
+				$(lines).each(function(i){
+					var match = Lines.exec(this.line);
+					if( null != match ){
+						var anchor = "";
+						var instruction ="";
+						var val1 = "";
+						var val2 = "";
+						var comment = "";
+						
+						// do some trimming
+						match[1] = match[1].replace(/^\s+|\s+$/g, '');
+						match[3] = match[3].replace(/^\s+|\s+$/g, '');
+						
+						if(match[1]){ anchor = match[1]; }
+						if(match[2]){ instruction = match[2]; }
+						if(match[3]){
+							var args = Arguments.exec(match[3]);
+							if(args[1]){
+								val1 = args[1];
+							}
+							if(args[3]){
+								val2 = args[3];
+							}
+						}
+						if(match[4]){ comment = match[4]; }
+						Program[i-matchoffset] = new CodeLine(anchor, instruction, val1, val2, comment);
+					}else{
+						if("" == this.line.replace(/^\s+|\s+$/g, '')){
+							matchoffset++;
+							return;
+						}
+						this.error = true;
+						Program[i-matchoffset] = new CodeLine(null, null, null, null, null);
+						Parseerror = true;
+					}
+				});
+				
+				
+				var highlightedcode = "";
+				var anchormax = 0;
+				var anchoroffset = 1;
+				var instructionmax = 0;
+				var valuemax = 0;
+				for(i = 0; i < Program.length; i++){
+					if(Program[i].anchor && Program[i].anchor.length > anchormax){
+						anchormax = Program[i].anchor.length;
+					}
+					if(Program[i].instruction && Program[i].instruction.length > instructionmax){
+						instructionmax = Program[i].instruction.length
+					}
+					if(Program[i].val1 && Program[i].val2 && (Program[i].val1.length + Program[i].val2.length) > valuemax){
+						valuemax = Program[i].val1.length + Program[i].val2.length;
+					}else if(Program[i].val1 && Program[i].val1.length > valuemax){
+						valuemax = Program[i].val1.length;
+					}
+				}
+				if(0 == anchormax){
+					anchoroffset = 0;
+				}
+				for(i = 0; i < Program.length; i++){
+					highlightedcode += "<div ";
+					if(lines[i].error){
+						lines[i].line = lines[i].line.replace(/\s/g, '&nbsp;');
+						highlightedcode += "class=\"error\">" + lines[i].line + "<\/span><br \/>";
+					}else{
+						highlightedcode += "id=\"l" + i + "\">";
+						if(Program[i].anchor.length){
+							highlightedcode += "<span class=\"anchor\"\>" + Program[i].anchor + genSpaces(anchormax - Program[i].anchor.length + anchoroffset) + "<\/span>";
+						}else{
+							highlightedcode += Program[i].anchor + genSpaces(anchormax - Program[i].anchor.length + anchoroffset);
+						}
+						if(Program[i].instruction.length){
+							highlightedcode += "<span class=\"keyword\"\>" + Program[i].instruction + genSpaces(instructionmax - Program[i].instruction.length + 1) + "<\/span>";
+						}else{
+							highlightedcode += Program[i].instruction + genSpaces(instructionmax - Program[i].instruction.length + 1);
+						}
+						if(Program[i].val1.length){
+							highlightedcode += Program[i].val1;
+							if(Program[i].val2.length){
+								highlightedcode += ",&nbsp;" + Program[i].val2 + genSpaces(valuemax - Program[i].val1.length - Program[i].val2.length);
+							}else{
+								highlightedcode += genSpaces(valuemax - Program[i].val1.length + 2)
+							}
+						}
+						if(Program[i].comment.length){
+							highlightedcode += "&nbsp;<span class=\"comment\"\>"  + Program[i].comment + "<\/span>";
+						}
+						highlightedcode += "<\/div>";
+					}
+				}
+
+				$("#ramcodestatic").empty();
+				$("#ramcodestatic").append(highlightedcode);
+				$("#ramcode").hide();
+				$(this).hide();
+				$("#ramcodestatic").show();
+				$("#editlabel").show();
+				if(Parseerror){
+					State = Modes.parseerror;
+					alert("Syntax errors are highlighted in red. Please check the code for typos.");
+				}else{
+					State = Modes.ready;
+				}
+			}
+		});
+		
+		$("#ramcodestatic").bind("dblclick", function(){
+			if(Modes.ready == State || Modes.parseerror == State){
+				State = Modes.editmode;
+				$("#editlabel").hide();
+				$("#ramcodestatic").hide();
+				$("#ramcode").show();
+				$("#parse").show();
+			}
+		});
+
+		$("#make_it_so").click(function(){
+			if(Modes.editmode == State){
+				$(this).attr("disabled", "true");
+				$("#parse").trigger('click');
+				var intervalID = setInterval(function(){
+					if(Modes.parseerror == State){
+						clearInterval(intervalID);
+						$("#make_it_so").removeAttr("disabled");
+					}else if(Modes.ready == State){
+						clearInterval(intervalID);
+						State = Modes.execution;
+						$("#make_it_so").val("Stop");
+						$("#make_it_so").removeAttr("disabled");
+						$("#editlabel").hide();
+						// Let's do this
+						Execution();
+					}
+				}, 75);
+			}else if(Modes.parseerror == State){
+				alert("Can't execute the program, because it contains syntax errors.");
+			}else if(Modes.ready == State){
+				State = Modes.execution;
+				$(this).val("Stop");
+				$("#editlabel").hide();
+				// Let's do this!
+				Execution();
+			}else if(Modes.execution == State){
+				$("#make_it_so").val("Make it so!");
+				$("#editlabel").show();
+				State = Modes.ready;
+			}
+		});
+		
+		function Execution(){
+			// load input values into registers
+			var registers = new Array(16);
+			for(i = 0; i < registers.length; i++){
+				registers[i] = 0;
+				$("#c"+i).text("0");
+			}
+			var programcounter = 0;
+			var oldcounter = -1;
+			$("#pc").text("0");
+			var inputstring = $("#ram_input").val();
+			var inputarray = inputstring.split(",");
+			for(i = 0; i < inputarray.length; i++){
+				registers[i+1] = parseInt(inputarray[i]);
+				updateField("c"+(i+1), registers[i+1]);
+				//$("#c"+(i+1)).text(registers[i+1]);
+			}
+			var intervalID = setInterval(function(){
+				if(Modes.execution != State){
+					clearInterval(intervalID);
+					$("#l"+oldcounter).toggleClass("highlight");
+					return;
+				}
+				if((programcounter+1) >= Program.length){
+					// bad jump or missing "end" statement
+					clearInterval(intervalID);
+				}
+				updateField("pc", programcounter+1);
+				$("#l"+oldcounter).toggleClass("highlight");
+				$("#l"+programcounter).toggleClass("highlight");
+				if("end" == Program[programcounter].instruction){
+					clearInterval(intervalID);
+					$("#make_it_so").val("Make it so!");
+					$("#editlabel").show();
+					State = Modes.ready;
+					setTimeout(function(){$("#l"+programcounter).toggleClass("highlight");}, 1000);
+					return;
+				}else if("load" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1, 16);
+					registers[0] = registers[address];
+					updateField("c0", registers[0]);
+				}else if("cload" == Program[programcounter].instruction){
+					var value = parseInt(Program[programcounter].val1);
+					registers[0] = value;
+					updateField("c0", registers[0]);
+				}else if("indload" == Program[programcounter].instruction){
+					var pointer = parseInt(Program[programcounter].val1, 16);
+					var address = registers[pointer];
+					registers[0] = registers[address];
+					updateField("c0", registers[0]);
+				}else if("store" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1, 16);
+					registers[address] = registers[0];
+					updateField("c" + address, registers[0]);
+				}else if("indstore" == Program[programcounter].instruction){
+					var pointer = parseInt(Program[programcounter].val1, 16);
+					var address = registers[pointer];
+					registers[address] = registers[0];
+					updateField("c" + address, registers[0]);
+				}else if("add" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1, 16);
+					registers[0] = registers[0] + registers[address];
+					updateField("c0", registers[0]);
+				}else if("cadd" == Program[programcounter].instruction){
+					var value = parseInt(Program[programcounter].val1);
+					registers[0] = registers[0] + value;
+					updateField("c0", registers[0]);
+				}else if("indadd" == Program[programcounter].instruction){
+					var pointer = parseInt(Program[programcounter].val1, 16);
+					var address = registers[pointer];
+					registers[0] = registers[0] + registers[address];
+					updateField("c0", registers[0]);
+				}else if("sub" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1, 16);
+					registers[0] = registers[0] - registers[address];
+					updateField("c0", registers[0]);
+				}else if("csub" == Program[programcounter].instruction){
+					var value = parseInt(Program[programcounter].val1);
+					registers[0] = registers[0] - value;
+					updateField("c0", registers[0]);
+				}else if("indsub" == Program[programcounter].instruction){
+					var pointer = parseInt(Program[programcounter].val1, 16);
+					var address = registers[pointer];
+					registers[0] = registers[0] - registers[address];
+					updateField("c0", registers[0]);
+				}else if("mul" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1, 16);
+					registers[0] = registers[0] * registers[address];
+					updateField("c0", registers[0]);
+				}else if("cmul" == Program[programcounter].instruction){
+					var value = parseInt(Program[programcounter].val1);
+					registers[0] = registers[0] * value;
+					updateField("c0", registers[0]);
+				}else if("indmul" == Program[programcounter].instruction){
+					var pointer = parseInt(Program[programcounter].val1, 16);
+					var address = registers[pointer];
+					registers[0] = registers[0] * registers[address];
+					updateField("c0", registers[0]);
+				}else if("div" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1, 16);
+					registers[0] = registers[0] / registers[address];
+					updateField("c0", registers[0]);
+				}else if("cdiv" == Program[programcounter].instruction){
+					var value = parseInt(Program[programcounter].val1);
+					registers[0] = registers[0] / value;
+					updateField("c0", registers[0]);
+				}else if("inddiv" == Program[programcounter].instruction){
+					var pointer = parseInt(Program[programcounter].val1, 16);
+					var address = registers[pointer];
+					registers[0] = registers[0] / registers[address];
+					updateField("c0", registers[0]);
+				}else if("goto" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1);
+					oldcounter = programcounter;
+					programcounter = address-1;
+					return;
+				}else if("gotoe" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1);
+					var condition = parseInt(Program[programcounter].val2);
+					if(registers[0] == condition){
+						oldcounter = programcounter;
+						programcounter = address-1;
+						return;
+					}
+				}else if("gotolt" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1);
+					var condition = parseInt(Program[programcounter].val2);
+					if(registers[0] < condition){
+						oldcounter = programcounter;
+						programcounter = address-1;
+						return;
+					}
+				}else if("gotolte" == Program[programcounter].instruction){
+					var address = parseInt(Program[programcounter].val1);
+					var condition = parseInt(Program[programcounter].val2);
+					if(registers[0] <= condition){
+						oldcounter = programcounter;
+						programcounter = address-1;
+						return;
+					}
+				}
+				
+				oldcounter = programcounter++;
+			}, 1000);
+			
+		}
+		
+		function updateField(index, value){
+			var element = $("#"+index);
+			var currentColor = jQuery.data(element.get(0), "basecolor");
+			if(!currentColor)
+			{
+				currentColor = element.css("background-color");
+				jQuery.data(element.get(0), "basecolor", currentColor);
+			}
+			element.stop(true, true);
+			//element.css("background-color", "yellow");
+			element.animate( { backgroundColor: "yellow" }, 1 , "linear", function(){
+				element.animate( { backgroundColor: "\"" + currentColor + "\"" }, 500);
+			});
+			element.text(value);
+		}
+		
+		$("#link_square_root").click(function(event){
+			event.preventDefault();
+			if(Modes.ready == State || Modes.parseerror == State){
+				State = Modes.editmode;
+				$("#editlabel").hide();
+				$("#ramcodestatic").hide();
+				$("#ramcode").show();
+				$("#parse").show();
+				$("#ramcode").text($("#square_root").html());
+			}
+		});
+		
+		/* value swapping for input fields */
+		var swapValues = [];
+		$(".swap_value").each(function(i){
+			swapValues[i] = $(this).val();
+			$(this).focus(function(){
+				if ($(this).val() == swapValues[i]) {
+					$(this).val("");
+				}
+			}).blur(function(){
+				if ($.trim($(this).val()) == "") {
+					$(this).val(swapValues[i]);
+				}
+			});
+		});
+		
+	});
+</script>
+</head>
+<body>
+
+<!--
+                    ________               
+                 .##@@&&&@@##.             
+              ,##@&::%&&%%::&@##.          
+             #@&:%%000000000%%:&@#         
+           #@&:%00'         '00%:&@#       
+          #@&:%0'             '0%:&@#      
+         #@&:%0                 0%:&@#     
+        #@&:%0  This is for good 0%:&@#    
+        #@&:%0   luck trying to  0%:&@#    
+        "" ' "   get this        " ' ""    
+      _oOoOoOo_  working in IE.   .-.-.    
+     (oOoOoOoOo)                 (  :  )   
+      )`"""""`(                .-.`. .'.-. 
+     /         \              (_  '.Y.'  _)
+    |           |             (   .'|'.   )
+    \           /              '-'  |  '-' 
+     `=========`                           
+     thanks to my heros at yayquery.com :-)
+-->
+
+<div id="page_margins">
+	<div id="page">
+		<div id="innerpage">
+			<div id="title"><h1>Javascript Random Access Machine</h1><h4>&nbsp;v0.1</h4></div>
+			<div id="main">
+				<div id="column_1">
+					<h2>Machine State</h2>
+					<div class="tablewrapper">
+						<table>
+							<thead>
+								<tr class="odd">
+									<th style="width:5em;">Name</th>
+									<th style="width:5em;">Value</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td>PC</td>
+									<td id="pc">0</td>
+								</tr>
+								<tr class="odd">
+									<td>Acc</td>
+									<td id="c0">0</td>
+								</tr>
+								<tr>
+									<td>1</td>
+									<td id="c1">0</td>
+								</tr>
+								<tr class="odd">
+									<td>2</td>
+									<td id="c2">0</td>
+								</tr>
+								<tr>
+									<td>3</td>
+									<td id="c3">0</td>
+								</tr>
+								<tr class="odd">
+									<td>4</td>
+									<td id="c4">0</td>
+								</tr>
+								<tr>
+									<td>5</td>
+									<td id="c5">0</td>
+								</tr>
+								<tr class="odd">
+									<td>6</td>
+									<td id="c6">0</td>
+								</tr>
+								<tr>
+									<td>7</td>
+									<td id="c7">0</td>
+								</tr>
+								<tr class="odd">
+									<td>8</td>
+									<td id="c8">0</td>
+								</tr>
+								<tr>
+									<td>9</td>
+									<td id="c9">0</td>
+								</tr>
+								<tr class="odd">
+									<td>a</td>
+									<td id="c10">0</td>
+								</tr>
+								<tr>
+									<td>b</td>
+									<td id="c11">0</td>
+								</tr>
+								<tr class="odd">
+									<td>c</td>
+									<td id="c12">0</td>
+								</tr>
+								<tr>
+									<td>d</td>
+									<td id="c13">0</td>
+								</tr>
+								<tr class="odd">
+									<td>e</td>
+									<td id="c14">0</td>
+								</tr>
+								<tr>
+									<td>f</td>
+									<td id="c15">0</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+				<div id="inputblock">
+					<h2>Input</h2>
+					<input style="width: 180px;" name="ram_input" id="ram_input" type="text" class="swap_value" value="comma seperated integers"/>
+					<input style="width: 130px;" id="make_it_so" type="submit" value="Make it so!" />
+				</div>
+				<div id="codeblock">
+					<h2 style="display:inline;">Code</h2><span style="padding-left:20px;">Load examples: <a id="link_square_root" href="#">square root</a> | <a href="#">something</a> | <a href="#">anything</a> </span><br />
+					<script id="square_root" type="text/plain">       cload      1
+       store      2      // i = 1
+       store      3      // j = 1
+$while load       1      // 
+       sub        3      // c(0) = n - j
+       gotolt     14, 0  // if c(0) < 0 goto end
+       cload      1
+       add        2
+       store      2      // i = i + 1
+       load       2
+       mul        2
+       store      3      // j = i * i
+       goto       4
+$end   load       2
+       csub       1
+       store      1
+       end</script>
+					<div style="width:540px; height:293px; position:relative;">
+						<textarea id="ramcode" name="code" style="width:100%; height:100%;"></textarea>
+						<div id="editlabel">double click to edit</div>
+						<div id="ramcodestatic"></div>
+					</div>
+					<input style="width: 150px; margin-top:5px;" id="parse" type="submit" value="Accept code changes!" />
+				</div>
+				<div id="helpblock">
+					<h2>Help</h2>
+					<div class="tablewrapper">
+						<table>
+							<thead>
+								<tr class="odd">
+									<th style="width:16em;">Instructions</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td>load, cload, indload</td>
+								</tr>
+								<tr class="odd">
+									<td><i><u>load</u> loads the value at the passed address to the accumulator. <u>cload</u> directly loads the argument to the acc.</i>. <u>indload</u> takes the value at the given address as an address itself and basically performs load with that address.</td>
+								</tr>
+								<tr>
+									<td>store, indstore</td>
+								</tr>
+								<tr class="odd">
+									<td><i>stores the value of the accumulator at a given address.</i></td>
+								</tr>
+								<tr>
+									<td>add, cadd, indadd</td>
+								</tr>
+								<tr class="odd">
+									<td><i>Acc = Acc + argument</i></td>
+								</tr>
+								<tr>
+									<td>sub, csub, indsub</td>
+								</tr>
+								<tr class="odd">
+									<td><i>Acc = Acc - argument</i></td>
+								</tr>
+								<tr>
+									<td>mul, cmul, indmul</td>
+								</tr>
+								<tr class="odd">
+									<td><i>Acc = Acc * argument</i></td>
+								</tr>
+								<tr>
+									<td>div, cdiv, inddiv</td>
+								</tr>
+								<tr class="odd">
+									<td><i>Acc = Acc / argument</i></td>
+								</tr>
+								<tr>
+									<td>goto, gotoe, gotolt, gotolte</td>
+								</tr>
+								<tr class="odd">
+									<td><i>takes a line number <del>or a label</del> as first argument and an optional second one for the jump condition. (e:equal, lt:less than, lte:less than or equal)</i></td>
+								</tr>
+								<tr>
+									<td>end <i style="font-weight:normal;">stops the execution</i></td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+</body>
+</html>
